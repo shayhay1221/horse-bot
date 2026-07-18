@@ -1,16 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 ربات بازی اسب‌سواری تلگرام
-ساخته‌شده برای اجرا با Pydroid 3
-
-قبل از اجرا:
-    1) توی Pydroid 3 برو به بخش Pip و این کتابخونه رو نصب کن:
-       pyTelegramBotAPI
-
-    2) این فایل رو اجرا کن. یه فایل دیتابیس به اسم horse_game.db
-       کنار همین فایل ساخته میشه که اطلاعات همه‌چیز توش ذخیره میشه.
-
-نکته: ربات فقط داخل گروه کار می‌کنه (نه توی پی‌وی).
 """
 
 import telebot
@@ -18,27 +8,19 @@ import sqlite3
 import random
 import threading
 import time
+import os
 from datetime import datetime, timedelta
-
-# =========================================================
-#                    ⚙️  تنظیمات بازی  ⚙️
-#   هر عددی که اینجا عوض کنی، رفتار بازی عوض میشه.
-#   نیازی نیست بقیه‌ی کد رو بفهمی، فقط همینجا رو دستکاری کن.
-# =========================================================
 
 TOKEN = "8974177847:AAFd7ZC4aO74DdJ3PlpcngIDGHeyMvr24Qc"
 
 DB_PATH = "horse_game.db"
 
-# ---------- شیهه ----------
-NEIGH_COOLDOWN_MINUTES = 30       # هر چند دقیقه یه‌بار میشه شیهه زد
-NEIGH_MIN_POINTS = 1              # حداقل امتیاز شیهه عادی
-NEIGH_MAX_POINTS = 10             # حداکثر امتیاز شیهه عادی
-GOLDEN_NEIGH_CHANCE = 0.05        # شانس شیهه طلایی (0.05 = ۵٪)
-GOLDEN_NEIGH_POINTS = 50          # امتیاز شیهه طلایی
+NEIGH_COOLDOWN_MINUTES = 30
+NEIGH_MIN_POINTS = 1
+NEIGH_MAX_POINTS = 10
+GOLDEN_NEIGH_CHANCE = 0.05
+GOLDEN_NEIGH_POINTS = 50
 
-# ---------- سطوح اسب ----------
-# (حداقل یونجه‌ی کل کسب‌شده در طول بازی, اسم سطح)
 LEVELS = [
     (0,    "🐴 کره‌اسب"),
     (400,  "🐎 اسب جوان"),
@@ -46,18 +28,13 @@ LEVELS = [
     (1000, "👑 اسب افسانه‌ای"),
 ]
 
-# ---------- مریضی ----------
-SICKNESS_CHECK_INTERVAL_HOURS = 6     # هر چند ساعت یه‌بار چک بشه کسی مریض بشه یا نه
-SICKNESS_CHANCE_PER_CHECK = 0.05      # شانس مریض شدن در هر چک (۵٪)
-TREATMENT_COST = 40                   # هزینه‌ی درمان (از یونجه کم میشه)
+SICKNESS_CHECK_INTERVAL_HOURS = 6
+SICKNESS_CHANCE_PER_CHECK = 0.05
+TREATMENT_COST = 40
 
-# ---------- واکسن (آیتم فروشگاه) ----------
 VACCINE_PRICE = 60
-VACCINE_DURATION_DAYS = 3             # چند روز جلوی مریضی رو می‌گیره
+VACCINE_DURATION_DAYS = 3
 
-# ---------- فروشگاه ----------
-# هر آیتم: کلید = اسم دستوری (برای /buy)، مقادیر = (اسم نمایشی، قیمت، نوع)
-# نوع می‌تونه باشه: "vaccine" / "title" / "badge"
 SHOP_ITEMS = {
     "vaccine": ("🩹 واکسن", VACCINE_PRICE, "vaccine"),
     "title_champion": ("👑 عنوان: قهرمان اصطبل", 150, "title"),
@@ -66,17 +43,11 @@ SHOP_ITEMS = {
     "badge_fire": ("🖼️ بج: شعله سرکش", 100, "badge"),
 }
 
-# ---------- مسابقه ----------
-RACE_JOIN_SECONDS = 60             # چند ثانیه فرصت برای پیوستن به مسابقه
-RACE_MIN_PLAYERS = 2               # حداقل نفرات لازم برای برگزاری مسابقه
+RACE_JOIN_SECONDS = 60
+RACE_MIN_PLAYERS = 2
 
-# ---------- جایزه روزانه ----------
 DAILY_REWARD = 25
 DAILY_COOLDOWN_HOURS = 24
-
-# =========================================================
-#                    🗄️  دیتابیس  🗄️
-# =========================================================
 
 db_lock = threading.Lock()
 
@@ -166,7 +137,6 @@ def update_user(user_id, **fields):
 
 
 def add_balance(user_id, amount, count_as_earned=True):
-    """amount می‌تونه منفی هم باشه (برای خرج کردن)"""
     user = get_user(user_id)
     new_balance = user["balance"] + amount
     fields = {"balance": new_balance}
@@ -183,10 +153,6 @@ def get_all_users():
         conn.close()
         return [dict(r) for r in rows]
 
-
-# =========================================================
-#                    🧮  توابع کمکی  🧮
-# =========================================================
 
 def now():
     return datetime.now()
@@ -226,18 +192,17 @@ def is_vaccinated(user_row):
     return until is not None and until > now()
 
 
-# =========================================================
-#                    🤖  راه‌اندازی ربات  🤖
-# =========================================================
-
 bot = telebot.TeleBot(TOKEN, parse_mode=None)
 
-# وضعیت مسابقه‌ی جاری در حافظه (چون فقط یه مسابقه هم‌زمان مجازه)
+_proxy = os.environ.get("https_proxy") or os.environ.get("http_proxy")
+if _proxy:
+    telebot.apihelper.proxy = {"https": _proxy}
+
 current_race = {
     "active": False,
     "chat_id": None,
     "bet": None,
-    "players": {},   # user_id -> username/display name
+    "players": {},
     "timer": None,
 }
 race_lock = threading.Lock()
@@ -257,10 +222,6 @@ def group_only(func):
     return wrapper
 
 
-# =========================================================
-#                    🐴 شیهه 🐴
-# =========================================================
-
 @bot.message_handler(commands=["shihe", "neigh", "شیهه"])
 @group_only
 def handle_neigh(message):
@@ -269,10 +230,7 @@ def handle_neigh(message):
     user = get_user(user_id, username)
 
     if user["sick"]:
-        bot.reply_to(
-            message,
-            "🤒 اسبت مریضه و نمی‌تونه شیهه بزنه! اول درمانش کن: /darou"
-        )
+        bot.reply_to(message, "🤒 اسبت مریضه و نمی‌تونه شیهه بزنه! اول درمانش کن: /darou")
         return
 
     last_neigh = parse_time(user["last_neigh"])
@@ -295,10 +253,6 @@ def handle_neigh(message):
         bot.reply_to(message, f"🐴 شیهه زدی و {points} یونجه گرفتی! 🌾")
 
 
-# =========================================================
-#                    🤒 مریضی و درمان 🤒
-# =========================================================
-
 @bot.message_handler(commands=["darou", "درمان", "دارو"])
 @group_only
 def handle_treatment(message):
@@ -311,10 +265,7 @@ def handle_treatment(message):
         return
 
     if user["balance"] < TREATMENT_COST:
-        bot.reply_to(
-            message,
-            f"یونجه کافی نداری! درمان {TREATMENT_COST} یونجه هزینه داره و تو {user['balance']} تا داری."
-        )
+        bot.reply_to(message, f"یونجه کافی نداری! درمان {TREATMENT_COST} یونجه هزینه داره و تو {user['balance']} تا داری.")
         return
 
     add_balance(user_id, -TREATMENT_COST, count_as_earned=False)
@@ -323,8 +274,6 @@ def handle_treatment(message):
 
 
 def sickness_checker_loop():
-    """این تابع توی یه thread جدا هر چند ساعت یه‌بار اجرا میشه
-    و به‌صورت رندوم اسب بعضی کاربرا رو مریض می‌کنه."""
     while True:
         time.sleep(SICKNESS_CHECK_INTERVAL_HOURS * 3600)
         try:
@@ -350,10 +299,6 @@ def sickness_checker_loop():
         except Exception as e:
             print("خطا در چک مریضی:", e)
 
-
-# =========================================================
-#                    🛒 فروشگاه 🛒
-# =========================================================
 
 @bot.message_handler(commands=["shop", "فروشگاه"])
 @group_only
@@ -401,10 +346,6 @@ def handle_buy(message):
         bot.reply_to(message, f"✅ {name} خریدی! حالا این بج کنار اسمت نشون داده میشه.")
 
 
-# =========================================================
-#                    👤 پروفایل و جدول امتیازات 👤
-# =========================================================
-
 @bot.message_handler(commands=["profile", "پروفایل", "من"])
 @group_only
 def handle_profile(message):
@@ -451,10 +392,6 @@ def handle_top(message):
     bot.reply_to(message, "\n".join(lines))
 
 
-# =========================================================
-#                    🎁 جایزه روزانه 🎁
-# =========================================================
-
 @bot.message_handler(commands=["daily", "جایزه"])
 @group_only
 def handle_daily(message):
@@ -474,10 +411,6 @@ def handle_daily(message):
     update_user(user_id, last_daily=now().isoformat())
     bot.reply_to(message, f"🎁 جایزه‌ی روزانه گرفتی: {DAILY_REWARD} یونجه!")
 
-
-# =========================================================
-#                    🎲 مسابقه و شرط‌بندی 🎲
-# =========================================================
 
 @bot.message_handler(commands=["race", "مسابقه"])
 @group_only
@@ -499,12 +432,8 @@ def handle_race(message):
 
     with race_lock:
         if not current_race["active"]:
-            # شروع مسابقه‌ی جدید
             if amount_given is None:
-                bot.reply_to(
-                    message,
-                    "برای شروع مسابقه‌ی جدید باید مبلغ شرط رو مشخص کنی.\nمثال: /race 30"
-                )
+                bot.reply_to(message, "برای شروع مسابقه‌ی جدید باید مبلغ شرط رو مشخص کنی.\nمثال: /race 30")
                 return
 
             if user["balance"] < amount_given:
@@ -530,7 +459,6 @@ def handle_race(message):
             return
 
         else:
-            # پیوستن به مسابقه‌ی جاری
             if amount_given is not None and amount_given != current_race["bet"]:
                 bot.reply_to(
                     message,
@@ -561,7 +489,6 @@ def resolve_race():
         bet = current_race["bet"]
 
         if len(players) < RACE_MIN_PLAYERS:
-            # مسابقه لغو میشه و پول همه برمی‌گرده
             for uid in players:
                 add_balance(uid, bet, count_as_earned=False)
             try:
@@ -572,10 +499,8 @@ def resolve_race():
             except Exception:
                 pass
         else:
-            # انتخاب برنده (در حال حاضر همه شرط یکسان دارن، ولی این کد
-            # برای آینده هم کار می‌کنه اگه بخوای شرط‌های متفاوت اضافه کنی)
             user_ids = list(players.keys())
-            weights = [bet for _ in user_ids]  # فعلاً همه وزن یکسان دارن
+            weights = [bet for _ in user_ids]
             winner_id = random.choices(user_ids, weights=weights, k=1)[0]
 
             prize = bet * len(players)
@@ -591,17 +516,13 @@ def resolve_race():
                 )
             except Exception:
                 pass
-        
+
         current_race["active"] = False
         current_race["chat_id"] = None
         current_race["bet"] = None
         current_race["players"] = {}
+        current_race["timer"] = None
 
-  
-
-# =========================================================
-#                    ℹ️ راهنما ℹ️
-# =========================================================
 
 @bot.message_handler(commands=["start", "help", "راهنما"])
 @group_only
@@ -621,9 +542,22 @@ def handle_help(message):
     bot.reply_to(message, text)
 
 
-# =========================================================
-#                    🚀 اجرا 🚀
-# =========================================================
+def run_dummy_web_server():
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Horse bot is running!")
+
+        def log_message(self, format, *args):
+            pass
+
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    server.serve_forever()
+
 
 if __name__ == "__main__":
     init_db()
@@ -631,6 +565,10 @@ if __name__ == "__main__":
 
     sickness_thread = threading.Thread(target=sickness_checker_loop, daemon=True)
     sickness_thread.start()
+
+    web_thread = threading.Thread(target=run_dummy_web_server, daemon=True)
+    web_thread.start()
+
     print("ربات در حال اجراست... (برای توقف Ctrl+C بزن)")
 
     bot.infinity_polling()
