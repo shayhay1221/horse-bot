@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-ربات بازی اسب‌سواری تلگرام
+بازی «طویله» — ربات تلگرام
+یه اسب پرورش بده، مزرعه بکار، تو پیست مسابقه بده و طویله‌ت رو بزرگ کن!
 """
 
 import telebot
@@ -9,45 +10,87 @@ import random
 import threading
 import time
 import os
-from datetime import datetime, timedelta
+import math
+from datetime import datetime, timedelta, date
+
+# =========================================================
+#                    ⚙️  تنظیمات بازی  ⚙️
+#   هر عددی که اینجا عوض کنی، رفتار بازی عوض میشه.
+# =========================================================
 
 TOKEN = "8974177847:AAFd7ZC4aO74DdJ3PlpcngIDGHeyMvr24Qc"
 
-DB_PATH = "horse_game.db"
+DB_PATH = "stable_game.db"
 
-NEIGH_COOLDOWN_MINUTES = 30
-NEIGH_MIN_POINTS = 1
-NEIGH_MAX_POINTS = 10
-GOLDEN_NEIGH_CHANCE = 0.05
-GOLDEN_NEIGH_POINTS = 50
+STARTING_COINS = 20
 
-LEVELS = [
-    (0,    "🐴 کره‌اسب"),
-    (400,  "🐎 اسب جوان"),
-    (600,  "🏇 اسب مسابقه‌ای"),
-    (1000, "👑 اسب افسانه‌ای"),
-]
-
-SICKNESS_CHECK_INTERVAL_HOURS = 6
-SICKNESS_CHANCE_PER_CHECK = 0.05
-TREATMENT_COST = 40
-
-VACCINE_PRICE = 60
-VACCINE_DURATION_DAYS = 3
-
-SHOP_ITEMS = {
-    "vaccine": ("🩹 واکسن", VACCINE_PRICE, "vaccine"),
-    "title_champion": ("👑 عنوان: قهرمان اصطبل", 150, "title"),
-    "title_legend": ("👑 عنوان: افسانه دشت", 300, "title"),
-    "badge_star": ("🖼️ بج: ستاره طلایی", 100, "badge"),
-    "badge_fire": ("🖼️ بج: شعله سرکش", 100, "badge"),
+# ---------- نژادهای اسب ----------
+# hunger_max/energy_max: سقف نوارهای اسب | race_minutes: زمان پایه‌ی هر دور پیست
+# price: قیمت خرید | rarity_days_per_week: به‌طور میانگین چند روز از ۷ روز موجوده
+HORSE_BREEDS = {
+    "کره_اسب": {
+        "display": "🐴 کره‌اسب", "hunger_max": 2, "energy_max": 2,
+        "race_minutes": 60, "price": 0, "rarity_days_per_week": 7,
+    },
+    "ترکمن": {
+        "display": "🐎 اسب ترکمن", "hunger_max": 3, "energy_max": 3,
+        "race_minutes": 45, "price": 500, "rarity_days_per_week": 5,
+    },
+    "عرب": {
+        "display": "🏇 اسب عرب", "hunger_max": 4, "energy_max": 4,
+        "race_minutes": 30, "price": 1500, "rarity_days_per_week": 4,
+    },
+    "کرد": {
+        "display": "🐎 اسب کرد", "hunger_max": 4, "energy_max": 5,
+        "race_minutes": 25, "price": 2500, "rarity_days_per_week": 3,
+    },
+    "تروبرد": {
+        "display": "👑 تروبرد انگلیسی", "hunger_max": 5, "energy_max": 5,
+        "race_minutes": 15, "price": 5000, "rarity_days_per_week": 2,
+    },
+    "نجدی": {
+        "display": "💎 عرب اصیل نجدی", "hunger_max": 6, "energy_max": 6,
+        "race_minutes": 10, "price": 10000, "rarity_days_per_week": 1,
+    },
 }
+STARTER_BREED = "کره_اسب"
 
-RACE_JOIN_SECONDS = 60
-RACE_MIN_PLAYERS = 2
+# ---------- انرژی و گشنگی ----------
+ENERGY_REGEN_MINUTES = 60      # هر ۱ ساعت، ۱ واحد انرژی خودکار برمی‌گرده
+HAY_PER_FEED_UNIT = 5          # هر واحد گشنگی با ۵ یونجه پر میشه
 
-DAILY_REWARD = 25
-DAILY_COOLDOWN_HOURS = 24
+# ---------- مزرعه ----------
+PLOT_BUSHES = 10               # هر قطعه چند بوته داره (فقط جنبه‌ی نمایشی)
+PLOT_PLANT_COST = 10           # هزینه‌ی کاشتن یه قطعه‌ی کامل
+PLOT_GROW_MINUTES = 60         # زمان رشد
+HAY_PER_HARVEST = 20           # یونجه‌ی هر برداشت کامل
+
+# ---------- پیست و تماشاچی ----------
+INITIAL_AUDIENCE_CAPACITY = 5
+TICKET_PRICE = 2
+AUDIENCE_FLEE_PERCENT = 0.10
+AUDIENCE_RETURN_HOURS = 24
+
+# ---------- ارتقاها (قیمت پایه + رشد ۲۰٪ بعد از هر خرید) ----------
+UPGRADE_BASE_PRICES = {"stable": 120, "track": 96, "farm": 72}
+UPGRADE_GROWTH_RATE = 1.20
+
+# ---------- فروشگاه ----------
+SHOP_HAY_BUY_PER_10 = 5
+SHOP_HAY_SELL_PER_10 = 3
+SHOP_ENERGY_POTION_PRICE = 20
+SHOP_HORSESHOE_GOOD_PRICE = 100    # ۱۵٪ سریع‌تر
+SHOP_HORSESHOE_GREAT_PRICE = 300   # ۳۰٪ سریع‌تر
+HORSESHOE_GOOD_REDUCTION = 0.15
+HORSESHOE_GREAT_REDUCTION = 0.30
+
+# ---------- قرعه‌کشی روزانه ----------
+LOTTERY_PRIZE = 15
+LOTTERY_CHECK_INTERVAL_SECONDS = 3600  # هر ساعت چک می‌کنیم که آیا امروز قرعه‌کشی انجام شده یا نه
+
+# =========================================================
+#                    🗄️  دیتابیس  🗄️
+# =========================================================
 
 db_lock = threading.Lock()
 
@@ -66,14 +109,49 @@ def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
-                balance INTEGER DEFAULT 0,
-                total_earned INTEGER DEFAULT 0,
-                last_neigh TEXT,
-                sick INTEGER DEFAULT 0,
-                vaccine_until TEXT,
-                last_daily TEXT,
-                title TEXT,
-                badge TEXT
+                coins INTEGER DEFAULT 0,
+                hay INTEGER DEFAULT 0,
+                stable_capacity INTEGER DEFAULT 1,
+                track_capacity INTEGER DEFAULT 5,
+                track_audience INTEGER DEFAULT 0,
+                stable_upgrades INTEGER DEFAULT 0,
+                track_upgrades INTEGER DEFAULT 0,
+                farm_upgrades INTEGER DEFAULT 0
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS horses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                breed_key TEXT,
+                energy INTEGER,
+                hunger INTEGER,
+                last_energy_update TEXT,
+                horseshoe TEXT DEFAULT 'none',
+                racing_until TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS farm_plots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                status TEXT DEFAULT 'empty',
+                planted_at TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS audience_returns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                amount INTEGER,
+                return_at TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS daily_market (
+                breed_key TEXT PRIMARY KEY,
+                market_date TEXT,
+                available INTEGER
             )
         """)
         c.execute("""
@@ -106,54 +184,6 @@ def get_setting(key):
         return row["value"] if row else None
 
 
-def get_user(user_id, username=None):
-    with db_lock:
-        conn = get_conn()
-        row = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
-        if row is None:
-            conn.execute(
-                "INSERT INTO users (user_id, username) VALUES (?, ?)",
-                (user_id, username or "")
-            )
-            conn.commit()
-            row = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
-        elif username and row["username"] != username:
-            conn.execute("UPDATE users SET username=? WHERE user_id=?", (username, user_id))
-            conn.commit()
-        conn.close()
-        return dict(row)
-
-
-def update_user(user_id, **fields):
-    if not fields:
-        return
-    with db_lock:
-        conn = get_conn()
-        cols = ", ".join(f"{k}=?" for k in fields)
-        values = list(fields.values()) + [user_id]
-        conn.execute(f"UPDATE users SET {cols} WHERE user_id=?", values)
-        conn.commit()
-        conn.close()
-
-
-def add_balance(user_id, amount, count_as_earned=True):
-    user = get_user(user_id)
-    new_balance = user["balance"] + amount
-    fields = {"balance": new_balance}
-    if count_as_earned and amount > 0:
-        fields["total_earned"] = user["total_earned"] + amount
-    update_user(user_id, **fields)
-    return new_balance
-
-
-def get_all_users():
-    with db_lock:
-        conn = get_conn()
-        rows = conn.execute("SELECT * FROM users").fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
-
-
 def now():
     return datetime.now()
 
@@ -167,45 +197,331 @@ def parse_time(s):
         return None
 
 
-def compute_level(total_earned):
-    level_name = LEVELS[0][1]
-    for threshold, name in LEVELS:
-        if total_earned >= threshold:
-            level_name = name
-        else:
-            break
-    return level_name
+# ---------------------------------------------------------
+# کاربر
+# ---------------------------------------------------------
+
+def user_exists(user_id):
+    with db_lock:
+        conn = get_conn()
+        row = conn.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,)).fetchone()
+        conn.close()
+        return row is not None
 
 
-def display_name(user_row, tg_username=None, first_name=None):
-    base = first_name or tg_username or f"کاربر{user_row['user_id']}"
-    extras = ""
-    if user_row.get("badge"):
-        extras += f" {user_row['badge']}"
-    if user_row.get("title"):
-        extras += f" | {user_row['title']}"
-    return f"{base}{extras}"
+def ensure_user(user_id, username):
+    """اگه کاربر جدیده، طویله‌ی اولیه، اسب رایگان، مزرعه‌ی خالی و سکه‌ی شروع رو براش می‌سازه."""
+    if user_exists(user_id):
+        # فقط یوزرنیم رو آپدیت کن اگه عوض شده
+        with db_lock:
+            conn = get_conn()
+            conn.execute("UPDATE users SET username=? WHERE user_id=?", (username or "", user_id))
+            conn.commit()
+            conn.close()
+        return
+
+    with db_lock:
+        conn = get_conn()
+        conn.execute(
+            """INSERT INTO users (user_id, username, coins, hay, stable_capacity, track_capacity, track_audience)
+               VALUES (?, ?, ?, 0, 1, ?, 0)""",
+            (user_id, username or "", STARTING_COINS, INITIAL_AUDIENCE_CAPACITY)
+        )
+        # اسب اولیه: خسته و گشنه (انرژی و گشنگی صفر)
+        conn.execute(
+            """INSERT INTO horses (user_id, breed_key, energy, hunger, last_energy_update, horseshoe)
+               VALUES (?, ?, 0, 0, ?, 'none')""",
+            (user_id, STARTER_BREED, now().isoformat())
+        )
+        # یه قطعه‌ی مزرعه‌ی خالی
+        conn.execute(
+            "INSERT INTO farm_plots (user_id, status) VALUES (?, 'empty')",
+            (user_id,)
+        )
+        conn.commit()
+        conn.close()
 
 
-def is_vaccinated(user_row):
-    until = parse_time(user_row.get("vaccine_until"))
-    return until is not None and until > now()
+def get_user_row(user_id):
+    with db_lock:
+        conn = get_conn()
+        row = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
+        conn.close()
+        return dict(row) if row else None
 
+
+def find_user_by_username(username):
+    username = username.lstrip("@").lower()
+    with db_lock:
+        conn = get_conn()
+        row = conn.execute(
+            "SELECT * FROM users WHERE LOWER(username)=?", (username,)
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+
+def get_all_user_ids():
+    with db_lock:
+        conn = get_conn()
+        rows = conn.execute("SELECT user_id FROM users").fetchall()
+        conn.close()
+        return [r["user_id"] for r in rows]
+
+
+def adjust_coins(user_id, delta):
+    """این تابع اتمیک هست: تو یه قفل واحد چک و کم/زیاد می‌کنه، برای جلوگیری از باگ کسر نشدن موجودی."""
+    with db_lock:
+        conn = get_conn()
+        row = conn.execute("SELECT coins FROM users WHERE user_id=?", (user_id,)).fetchone()
+        if row is None:
+            conn.close()
+            return False, 0
+        new_value = row["coins"] + delta
+        if new_value < 0:
+            conn.close()
+            return False, row["coins"]
+        conn.execute("UPDATE users SET coins=? WHERE user_id=?", (new_value, user_id))
+        conn.commit()
+        conn.close()
+        return True, new_value
+
+
+def adjust_hay(user_id, delta):
+    with db_lock:
+        conn = get_conn()
+        row = conn.execute("SELECT hay FROM users WHERE user_id=?", (user_id,)).fetchone()
+        if row is None:
+            conn.close()
+            return False, 0
+        new_value = row["hay"] + delta
+        if new_value < 0:
+            conn.close()
+            return False, row["hay"]
+        conn.execute("UPDATE users SET hay=? WHERE user_id=?", (new_value, user_id))
+        conn.commit()
+        conn.close()
+        return True, new_value
+
+
+def update_user_fields(user_id, **fields):
+    if not fields:
+        return
+    with db_lock:
+        conn = get_conn()
+        cols = ", ".join(f"{k}=?" for k in fields)
+        values = list(fields.values()) + [user_id]
+        conn.execute(f"UPDATE users SET {cols} WHERE user_id=?", values)
+        conn.commit()
+        conn.close()
+
+
+# ---------------------------------------------------------
+# اسب‌ها
+# ---------------------------------------------------------
+
+def get_horses(user_id):
+    with db_lock:
+        conn = get_conn()
+        rows = conn.execute(
+            "SELECT * FROM horses WHERE user_id=? ORDER BY id", (user_id,)
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+
+def get_horse_by_index(user_id, index):
+    """index از ۱ شروع میشه (اسب شماره ۱، ۲، ...)"""
+    horses = get_horses(user_id)
+    if 1 <= index <= len(horses):
+        return horses[index - 1]
+    return None
+
+
+def update_horse(horse_id, **fields):
+    if not fields:
+        return
+    with db_lock:
+        conn = get_conn()
+        cols = ", ".join(f"{k}=?" for k in fields)
+        values = list(fields.values()) + [horse_id]
+        conn.execute(f"UPDATE horses SET {cols} WHERE id=?", values)
+        conn.commit()
+        conn.close()
+
+
+def add_horse(user_id, breed_key, energy=None, hunger=None):
+    breed = HORSE_BREEDS[breed_key]
+    e = breed["energy_max"] if energy is None else energy
+    h = breed["hunger_max"] if hunger is None else hunger
+    with db_lock:
+        conn = get_conn()
+        conn.execute(
+            """INSERT INTO horses (user_id, breed_key, energy, hunger, last_energy_update, horseshoe)
+               VALUES (?, ?, ?, ?, ?, 'none')""",
+            (user_id, breed_key, e, h, now().isoformat())
+        )
+        conn.commit()
+        conn.close()
+
+
+def apply_energy_regen(horse):
+    """محاسبه‌ی تنبل (Lazy) انرژی: بر اساس زمان گذشته، انرژی رو آپدیت و ذخیره می‌کنه."""
+    breed = HORSE_BREEDS[horse["breed_key"]]
+    max_energy = breed["energy_max"]
+    if horse["energy"] >= max_energy:
+        return horse
+
+    last_update = parse_time(horse["last_energy_update"]) or now()
+    elapsed_minutes = (now() - last_update).total_seconds() / 60
+    units_gained = int(elapsed_minutes // ENERGY_REGEN_MINUTES)
+
+    if units_gained <= 0:
+        return horse
+
+    new_energy = min(max_energy, horse["energy"] + units_gained)
+    # ساعتِ آخرین آپدیت رو به اندازه‌ی واحدهای مصرف‌شده جلو می‌بریم (نه به now کامل، تا واحد اضافه هدر نره)
+    new_last_update = last_update + timedelta(minutes=units_gained * ENERGY_REGEN_MINUTES)
+
+    update_horse(horse["id"], energy=new_energy, last_energy_update=new_last_update.isoformat())
+    horse["energy"] = new_energy
+    horse["last_energy_update"] = new_last_update.isoformat()
+    return horse
+
+
+def is_horse_racing(horse):
+    racing_until = parse_time(horse.get("racing_until"))
+    return racing_until is not None and racing_until > now()
+
+
+# ---------------------------------------------------------
+# مزرعه
+# ---------------------------------------------------------
+
+def get_plots(user_id):
+    with db_lock:
+        conn = get_conn()
+        rows = conn.execute(
+            "SELECT * FROM farm_plots WHERE user_id=? ORDER BY id", (user_id,)
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+
+def refresh_plot_status(plot):
+    """اگه قطعه در حال رشد بود و زمانش تموم شده، وضعیتش رو به آماده تغییر میده."""
+    if plot["status"] == "growing":
+        planted_at = parse_time(plot["planted_at"])
+        if planted_at and (now() - planted_at).total_seconds() / 60 >= PLOT_GROW_MINUTES:
+            with db_lock:
+                conn = get_conn()
+                conn.execute("UPDATE farm_plots SET status='ready' WHERE id=?", (plot["id"],))
+                conn.commit()
+                conn.close()
+            plot["status"] = "ready"
+    return plot
+
+    
+def add_plot(user_id):
+    with db_lock:
+        conn = get_conn()
+        conn.execute("INSERT INTO farm_plots (user_id, status) VALUES (?, 'empty')", (user_id,))
+        conn.commit()
+        conn.close()
+
+
+def set_plot(plot_id, **fields):
+    with db_lock:
+        conn = get_conn()
+        cols = ", ".join(f"{k}=?" for k in fields)
+        values = list(fields.values()) + [plot_id]
+        conn.execute(f"UPDATE farm_plots SET {cols} WHERE id=?", values)
+        conn.commit()
+        conn.close()
+
+
+# ---------------------------------------------------------
+# تماشاچی‌های فراری (برگشت بعد از ۲۴ ساعت)
+# ---------------------------------------------------------
+
+def process_audience_returns(user_id):
+    """هر رکورد فرارِ تاریخ‌گذشته رو دوباره به تماشاچی‌های فعلی اضافه می‌کنه."""
+    with db_lock:
+        conn = get_conn()
+        rows = conn.execute(
+            "SELECT * FROM audience_returns WHERE user_id=? AND return_at<=?",
+            (user_id, now().isoformat())
+        ).fetchall()
+        if not rows:
+            conn.close()
+            return
+
+        total_return = sum(r["amount"] for r in rows)
+        user_row = conn.execute("SELECT track_audience, track_capacity FROM users WHERE user_id=?", (user_id,)).fetchone()
+        new_audience = min(user_row["track_capacity"], user_row["track_audience"] + total_return)
+        conn.execute("UPDATE users SET track_audience=? WHERE user_id=?", (new_audience, user_id))
+        conn.execute("DELETE FROM audience_returns WHERE user_id=? AND return_at<=?", (user_id, now().isoformat()))
+        conn.commit()
+        conn.close()
+
+
+def schedule_audience_return(user_id, amount):
+    with db_lock:
+        conn = get_conn()
+        return_at = (now() + timedelta(hours=AUDIENCE_RETURN_HOURS)).isoformat()
+        conn.execute(
+            "INSERT INTO audience_returns (user_id, amount, return_at) VALUES (?, ?, ?)",
+            (user_id, amount, return_at)
+        )
+        conn.commit()
+        conn.close()
+
+
+# ---------------------------------------------------------
+# بازار روزانه‌ی اسب
+# ---------------------------------------------------------
+
+def refresh_daily_market():
+    today = date.today().isoformat()
+    stored_date = get_setting("market_date")
+    if stored_date == today:
+        return
+
+    with db_lock:
+        conn = get_conn()
+        for breed_key, info in HORSE_BREEDS.items():
+            if breed_key == STARTER_BREED:
+                continue
+            chance = info["rarity_days_per_week"] / 7
+            available = 1 if random.random() < chance else 0
+            conn.execute(
+                """INSERT INTO daily_market (breed_key, market_date, available) VALUES (?, ?, ?)
+                   ON CONFLICT(breed_key) DO UPDATE SET market_date=excluded.market_date, available=excluded.available""",
+                (breed_key, today, available)
+            )
+        conn.commit()
+        conn.close()
+    set_setting("market_date", today)
+
+
+def get_market():
+    refresh_daily_market()
+    with db_lock:
+        conn = get_conn()
+        rows = conn.execute("SELECT * FROM daily_market").fetchall()
+        conn.close()
+        return {r["breed_key"]: bool(r["available"]) for r in rows}
+
+
+# =========================================================
+#                    🤖  راه‌اندازی ربات  🤖
+# =========================================================
 
 bot = telebot.TeleBot(TOKEN, parse_mode=None)
 
 _proxy = os.environ.get("https_proxy") or os.environ.get("http_proxy")
 if _proxy:
     telebot.apihelper.proxy = {"https": _proxy}
-
-current_race = {
-    "active": False,
-    "chat_id": None,
-    "bet": None,
-    "players": {},
-    "timer": None,
-}
-race_lock = threading.Lock()
 
 
 def is_group(message):
@@ -218,329 +534,701 @@ def group_only(func):
             bot.reply_to(message, "این بازی فقط توی گروه قابل بازیه 🐴")
             return
         set_setting("last_chat_id", message.chat.id)
+        user_id = message.from_user.id
+        username = message.from_user.username or message.from_user.first_name or ""
+        ensure_user(user_id, username)
+        process_audience_returns(user_id)
         return func(message)
     return wrapper
 
 
-@bot.message_handler(commands=["shihe", "neigh", "شیهه"])
-@group_only
-def handle_neigh(message):
-    user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
-    user = get_user(user_id, username)
-
-    if user["sick"]:
-        bot.reply_to(message, "🤒 اسبت مریضه و نمی‌تونه شیهه بزنه! اول درمانش کن: /darou")
-        return
-
-    last_neigh = parse_time(user["last_neigh"])
-    if last_neigh:
-        remaining = last_neigh + timedelta(minutes=NEIGH_COOLDOWN_MINUTES) - now()
-        if remaining.total_seconds() > 0:
-            minutes = int(remaining.total_seconds() // 60) + 1
-            bot.reply_to(message, f"⏳ اسبت خسته‌ست، {minutes} دقیقه‌ی دیگه دوباره امتحان کن.")
-            return
-
-    is_golden = random.random() < GOLDEN_NEIGH_CHANCE
-    points = GOLDEN_NEIGH_POINTS if is_golden else random.randint(NEIGH_MIN_POINTS, NEIGH_MAX_POINTS)
-
-    add_balance(user_id, points)
-    update_user(user_id, last_neigh=now().isoformat())
-
-    if is_golden:
-        bot.reply_to(message, f"✨ شیهه طلایی! {points} یونجه گرفتی! 🌾")
-    else:
-        bot.reply_to(message, f"🐴 شیهه زدی و {points} یونجه گرفتی! 🌾")
+def display_name_of(message):
+    return message.from_user.username or message.from_user.first_name or str(message.from_user.id)
 
 
-@bot.message_handler(commands=["darou", "درمان", "دارو"])
-@group_only
-def handle_treatment(message):
-    user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
-    user = get_user(user_id, username)
+# =========================================================
+#                    🐴 اسب و پیست 🐴
+# =========================================================
 
-    if not user["sick"]:
-        bot.reply_to(message, "اسبت سالمه، نیازی به درمان نداره 🐴")
-        return
-
-    if user["balance"] < TREATMENT_COST:
-        bot.reply_to(message, f"یونجه کافی نداری! درمان {TREATMENT_COST} یونجه هزینه داره و تو {user['balance']} تا داری.")
-        return
-
-    add_balance(user_id, -TREATMENT_COST, count_as_earned=False)
-    update_user(user_id, sick=0)
-    bot.reply_to(message, f"💊 اسبت درمان شد! ({TREATMENT_COST} یونجه کم شد) حالا می‌تونه دوباره شیهه بزنه.")
-
-
-def sickness_checker_loop():
-    while True:
-        time.sleep(SICKNESS_CHECK_INTERVAL_HOURS * 3600)
-        try:
-            users = get_all_users()
-            chat_id = get_setting("last_chat_id")
-            for user in users:
-                if user["sick"]:
-                    continue
-                if is_vaccinated(user):
-                    continue
-                if random.random() < SICKNESS_CHANCE_PER_CHECK:
-                    update_user(user["user_id"], sick=1)
-                    if chat_id:
-                        name = user["username"] or f"کاربر{user['user_id']}"
-                        try:
-                            bot.send_message(
-                                int(chat_id),
-                                f"🤒 اسب {name} مریض شد! تا درمان نکنه نمی‌تونه شیهه بزنه.\n"
-                                f"درمان با دستور /darou"
-                            )
-                        except Exception:
-                            pass
-        except Exception as e:
-            print("خطا در چک مریضی:", e)
-
-
-@bot.message_handler(commands=["shop", "فروشگاه"])
-@group_only
-def handle_shop(message):
-    lines = ["🛒 فروشگاه:\n"]
-    for key, (name, price, _type) in SHOP_ITEMS.items():
-        lines.append(f"• {name} — {price} یونجه   (خرید: /buy {key})")
-    bot.reply_to(message, "\n".join(lines))
-
-
-@bot.message_handler(commands=["buy", "خرید"])
-@group_only
-def handle_buy(message):
-    parts = message.text.strip().split()
-    if len(parts) < 2:
-        bot.reply_to(message, "طرز استفاده: /buy <اسم آیتم>\nبرای دیدن لیست آیتم‌ها: /shop")
-        return
-
-    item_key = parts[1].lower()
-    if item_key not in SHOP_ITEMS:
-        bot.reply_to(message, "همچین آیتمی توی فروشگاه نیست. لیست آیتم‌ها: /shop")
-        return
-
-    name, price, item_type = SHOP_ITEMS[item_key]
-
-    user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
-    user = get_user(user_id, username)
-
-    if user["balance"] < price:
-        bot.reply_to(message, f"یونجه کافی نداری! {name} قیمتش {price} تاست و تو {user['balance']} تا داری.")
-        return
-
-    add_balance(user_id, -price, count_as_earned=False)
-
-    if item_type == "vaccine":
-        until = now() + timedelta(days=VACCINE_DURATION_DAYS)
-        update_user(user_id, vaccine_until=until.isoformat())
-        bot.reply_to(message, f"✅ {name} خریدی! تا {VACCINE_DURATION_DAYS} روز اسبت مریض نمیشه.")
-    elif item_type == "title":
-        update_user(user_id, title=name.replace("👑 عنوان: ", ""))
-        bot.reply_to(message, f"✅ {name} خریدی! حالا این عنوان کنار اسمت نشون داده میشه.")
-    elif item_type == "badge":
-        update_user(user_id, badge=name.split(":")[0].strip())
-        bot.reply_to(message, f"✅ {name} خریدی! حالا این بج کنار اسمت نشون داده میشه.")
-
-
-@bot.message_handler(commands=["profile", "پروفایل", "من"])
-@group_only
-def handle_profile(message):
-    user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
-    user = get_user(user_id, username)
-
-    level = compute_level(user["total_earned"])
-    status = "🤒 مریض" if user["sick"] else "😊 سالم"
-    vaccine_txt = ""
-    if is_vaccinated(user):
-        until = parse_time(user["vaccine_until"])
-        vaccine_txt = f"\n💉 واکسینه تا: {until.strftime('%Y-%m-%d %H:%M')}"
-
-    text = (
-        f"👤 پروفایل {display_name(user, username, message.from_user.first_name)}\n\n"
-        f"🌾 یونجه: {user['balance']}\n"
-        f"📈 کل یونجه کسب‌شده: {user['total_earned']}\n"
-        f"🐎 سطح: {level}\n"
-        f"❤️ وضعیت: {status}{vaccine_txt}"
+def format_horse_line(index, horse):
+    breed = HORSE_BREEDS[horse["breed_key"]]
+    status = ""
+    if is_horse_racing(horse):
+        remaining = parse_time(horse["racing_until"]) - now()
+        minutes_left = max(0, int(remaining.total_seconds() // 60) + 1)
+        status = f" 🏃 (تو پیست، {minutes_left} دقیقه مونده)"
+    shoe = ""
+    if horse["horseshoe"] == "good":
+        shoe = " 🔨(نعل خوب)"
+    elif horse["horseshoe"] == "great":
+        shoe = " 🔨(نعل عالی)"
+    return (
+        f"{index}. {breed['display']}{shoe}\n"
+        f"   ⚡ انرژی: {horse['energy']}/{breed['energy_max']}   "
+        f"🌾 گشنگی: {horse['hunger']}/{breed['hunger_max']}{status}"
     )
-    bot.reply_to(message, text)
 
 
-@bot.message_handler(commands=["top", "برترین‌ها"])
+@bot.message_handler(commands=["اسب", "horse"])
 @group_only
-def handle_top(message):
-    users = get_all_users()
-    users.sort(key=lambda u: u["total_earned"], reverse=True)
-    top_users = users[:10]
-
-    if not top_users:
-        bot.reply_to(message, "هنوز کسی امتیازی نداره!")
+def handle_horses(message):
+    user_id = message.from_user.id
+    horses = get_horses(user_id)
+    if not horses:
+        bot.reply_to(message, "هنوز اسبی نداری!")
         return
 
-    lines = ["🏆 جدول برترین‌ها:\n"]
-    medals = ["🥇", "🥈", "🥉"]
-    for i, user in enumerate(top_users):
-        medal = medals[i] if i < 3 else f"{i+1}."
-        name = user["username"] or f"کاربر{user['user_id']}"
-        level = compute_level(user["total_earned"])
-        lines.append(f"{medal} {name} — {user['total_earned']} یونجه ({level})")
-
-    bot.reply_to(message, "\n".join(lines))
+    lines = ["🐴 اسب‌های تو:\n"]
+    for i, horse in enumerate(horses, start=1):
+        horse = apply_energy_regen(horse)
+        lines.append(format_horse_line(i, horse))
+    bot.reply_to(message, "\n\n".join(lines))
 
 
-@bot.message_handler(commands=["daily", "جایزه"])
-@group_only
-def handle_daily(message):
-    user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
-    user = get_user(user_id, username)
-
-    last_daily = parse_time(user["last_daily"])
-    if last_daily:
-        remaining = last_daily + timedelta(hours=DAILY_COOLDOWN_HOURS) - now()
-        if remaining.total_seconds() > 0:
-            hours = int(remaining.total_seconds() // 3600) + 1
-            bot.reply_to(message, f"⏳ جایزه‌ی روزانه‌ت رو گرفتی، {hours} ساعت دیگه دوباره بیا.")
-            return
-
-    add_balance(user_id, DAILY_REWARD)
-    update_user(user_id, last_daily=now().isoformat())
-    bot.reply_to(message, f"🎁 جایزه‌ی روزانه گرفتی: {DAILY_REWARD} یونجه!")
-
-
-@bot.message_handler(commands=["race", "مسابقه"])
+@bot.message_handler(commands=["بدو", "run"])
 @group_only
 def handle_race(message):
     user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
-    user = get_user(user_id, username)
-
     parts = message.text.strip().split()
-    amount_given = None
-    if len(parts) > 1:
-        try:
-            amount_given = int(parts[1])
-            if amount_given <= 0:
-                raise ValueError
-        except ValueError:
-            bot.reply_to(message, "مبلغ شرط باید یه عدد مثبت باشه. مثال: /race 30")
-            return
+    if len(parts) < 2 or not parts[1].isdigit():
+        bot.reply_to(message, "طرز استفاده: /بدو <شماره اسب>\nمثال: /بدو 1")
+        return
 
-    with race_lock:
-        if not current_race["active"]:
-            if amount_given is None:
-                bot.reply_to(message, "برای شروع مسابقه‌ی جدید باید مبلغ شرط رو مشخص کنی.\nمثال: /race 30")
-                return
+    index = int(parts[1])
+    horse = get_horse_by_index(user_id, index)
+    if horse is None:
+        bot.reply_to(message, "همچین اسبی نداری!")
+        return
 
-            if user["balance"] < amount_given:
-                bot.reply_to(message, f"یونجه کافی نداری! تو {user['balance']} تا داری.")
-                return
+    if is_horse_racing(horse):
+        bot.reply_to(message, "این اسب همین الان تو پیسته، صبر کن نتیجه بیاد!")
+        return
 
-            add_balance(user_id, -amount_given, count_as_earned=False)
+    horse = apply_energy_regen(horse)
+    breed = HORSE_BREEDS[horse["breed_key"]]
 
-            current_race["active"] = True
-            current_race["chat_id"] = message.chat.id
-            current_race["bet"] = amount_given
-            current_race["players"] = {user_id: (username or str(user_id))}
+    if horse["energy"] < 1 or horse["hunger"] < 1:
+        bot.reply_to(
+            message,
+            "این اسب خیلی خسته یا گشنه‌ست و نمی‌تونه بدوئه!\n"
+            "با /غذا بهش یونجه بده یا صبر کن انرژیش برگرده."
+        )
+        return
 
-            bot.reply_to(
-                message,
-                f"🎲 مسابقه شروع شد! شرط این مسابقه: {amount_given} یونجه\n"
-                f"تا {RACE_JOIN_SECONDS} ثانیه‌ی دیگه با /race بپیوندید!"
-            )
+    # تعیین عملکرد بر اساس وضعیت فعلی (قبل از کم شدن)
+    energy_frac = horse["energy"] / breed["energy_max"]
+    hunger_frac = horse["hunger"] / breed["hunger_max"]
 
-            timer = threading.Timer(RACE_JOIN_SECONDS, resolve_race)
-            current_race["timer"] = timer
-            timer.start()
-            return
+    if energy_frac >= 1.0 and hunger_frac >= 1.0:
+        performance = "excellent"
+    elif energy_frac >= 0.5 and hunger_frac >= 0.5:
+        performance = "average"
+    else:
+        performance = "poor"
 
-        else:
-            if amount_given is not None and amount_given != current_race["bet"]:
-                bot.reply_to(
-                    message,
-                    f"مسابقه‌ای در حال برگزاریه با شرط {current_race['bet']} یونجه. "
-                    f"فقط بنویس /race تا با همون مبلغ بپیوندی."
-                )
-                return
+    # کم کردن انرژی و گشنگی (حداقل صفر)
+    new_energy = max(0, horse["energy"] - 1)
+    new_hunger = max(0, horse["hunger"] - 1)
+    update_horse(horse["id"], energy=new_energy, hunger=new_hunger)
 
-            if user_id in current_race["players"]:
-                bot.reply_to(message, "تو همین الانشم توی این مسابقه هستی!")
-                return
+    # محاسبه‌ی تماشاچی و سکه
+    process_audience_returns(user_id)
+    user = get_user_row(user_id)
+    audience = user["track_audience"]
 
-            bet = current_race["bet"]
-            if user["balance"] < bet:
-                bot.reply_to(message, f"یونجه کافی نداری! این مسابقه شرطش {bet} یونجه‌ست.")
-                return
+    if performance == "excellent":
+        coins_earned = audience * TICKET_PRICE
+    elif performance == "average":
+        coins_earned = int(audience * TICKET_PRICE * 0.5)
+    else:
+        coins_earned = int(audience * TICKET_PRICE * 0.2)
+        fled = math.ceil(audience * AUDIENCE_FLEE_PERCENT)
+        if fled > 0:
+            new_audience = audience - fled
+            update_user_fields(user_id, track_audience=new_audience)
+            schedule_audience_return(user_id, fled)
 
-            add_balance(user_id, -bet, count_as_earned=False)
-            current_race["players"][user_id] = username or str(user_id)
+    # محاسبه‌ی زمان دویدن بر اساس نعل
+    duration_minutes = breed["race_minutes"]
+    if horse["horseshoe"] == "good":
+        duration_minutes *= (1 - HORSESHOE_GOOD_REDUCTION)
+    elif horse["horseshoe"] == "great":
+        duration_minutes *= (1 - HORSESHOE_GREAT_REDUCTION)
+    duration_seconds = duration_minutes * 60
 
-            bot.reply_to(message, f"✅ به مسابقه پیوستی! تعداد نفرات الان: {len(current_race['players'])}")
+    racing_until = now() + timedelta(seconds=duration_seconds)
+    update_horse(horse["id"], racing_until=racing_until.isoformat())
 
+    chat_id = message.chat.id
+    timer = threading.Timer(
+        duration_seconds, finish_race,
+        args=(user_id, chat_id, coins_earned, performance, index)
+    )
+    timer.daemon = True
+    timer.start()
 
-def resolve_race():
-    with race_lock:
-        chat_id = current_race["chat_id"]
-        players = dict(current_race["players"])
-        bet = current_race["bet"]
-
-        if len(players) < RACE_MIN_PLAYERS:
-            for uid in players:
-                add_balance(uid, bet, count_as_earned=False)
-            try:
-                bot.send_message(
-                    chat_id,
-                    f"❌ مسابقه لغو شد چون کمتر از {RACE_MIN_PLAYERS} نفر بودن. یونجه‌ها برگشت داده شد."
-                )
-            except Exception:
-                pass
-        else:
-            user_ids = list(players.keys())
-            weights = [bet for _ in user_ids]
-            winner_id = random.choices(user_ids, weights=weights, k=1)[0]
-
-            prize = bet * len(players)
-            add_balance(winner_id, prize)
-
-            winner_name = players[winner_id]
-            try:
-                bot.send_message(
-                    chat_id,
-                    f"🏁 مسابقه تموم شد!\n"
-                    f"👑 برنده: {winner_name}\n"
-                    f"🌾 جایزه: {prize} یونجه"
-                )
-            except Exception:
-                pass
-
-        current_race["active"] = False
-        current_race["chat_id"] = None
-        current_race["bet"] = None
-        current_race["players"] = {}
-        current_race["timer"] = None
+    minutes_display = max(1, round(duration_minutes))
+    bot.reply_to(
+        message,
+        f"🏁 اسب شماره {index} رفت تو پیست! {minutes_display} دقیقه‌ی دیگه نتیجه رو اعلام می‌کنم."
+    )
 
 
-@bot.message_handler(commands=["start", "help", "راهنما"])
+def finish_race(user_id, chat_id, coins_earned, performance, horse_index):
+    adjust_coins(user_id, coins_earned)
+
+    performance_text = {
+        "excellent": "🌟 عملکرد عالی",
+        "average": "🙂 عملکرد متوسط",
+        "poor": "😞 عملکرد ضعیف (چندتا تماشاچی ناراضی رفتن)",
+    }[performance]
+
+    try:
+        bot.send_message(
+            chat_id,
+            f"🏁 نتیجه‌ی مسابقه‌ی اسب شماره {horse_index}:\n"
+            f"{performance_text}\n"
+            f"💰 {coins_earned} سکه به کیف پولت اضافه شد!"
+        )
+    except Exception:
+        pass
+
+
+@bot.message_handler(commands=["غذا", "feed"])
 @group_only
-def handle_help(message):
-    text = (
-        "🐴 به بازی اسب‌سواری خوش اومدی!\n\n"
-        "دستورات:\n"
-        "🐴 /shihe یا /شیهه — شیهه بزن و یونجه بگیر\n"
-        "👤 /profile — پروفایلت رو ببین\n"
-        "🏆 /top — جدول برترین‌ها\n"
-        "🎁 /daily — جایزه‌ی روزانه\n"
-        "🩹 /darou — درمان اسب مریض\n"
-        "🛒 /shop — فروشگاه\n"
-        "🛍️ /buy <آیتم> — خرید آیتم\n"
-        "🎲 /race <مبلغ> — شروع یا پیوستن به مسابقه"
+def handle_feed(message):
+    user_id = message.from_user.id
+    parts = message.text.strip().split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        bot.reply_to(message, "طرز استفاده: /غذا <شماره اسب>\nمثال: /غذا 1")
+        return
+
+    index = int(parts[1])
+    horse = get_horse_by_index(user_id, index)
+    if horse is None:
+        bot.reply_to(message, "همچین اسبی نداری!")
+        return
+
+    breed = HORSE_BREEDS[horse["breed_key"]]
+    if horse["hunger"] >= breed["hunger_max"]:
+        bot.reply_to(message, "این اسب سیره، نیازی به غذا نداره 🌾")
+        return
+
+    ok, remaining_hay = adjust_hay(user_id, -HAY_PER_FEED_UNIT)
+    if not ok:
+        bot.reply_to(
+            message,
+            f"یونجه‌ی کافی نداری! هر وعده {HAY_PER_FEED_UNIT} یونجه لازمه و تو {remaining_hay} تا داری."
+        )
+        return
+
+    update_horse(horse["id"], hunger=horse["hunger"] + 1)
+    bot.reply_to(message, f"🌾 به اسب شماره {index} غذا دادی! گشنگی: {horse['hunger']+1}/{breed['hunger_max']}")
+
+
+# =========================================================
+#                    🌾 مزرعه 🌾
+# =========================================================
+
+@bot.message_handler(commands=["مزرعه", "farm"])
+@group_only
+def handle_farm(message):
+    user_id = message.from_user.id
+    plots = get_plots(user_id)
+    plots = [refresh_plot_status(p) for p in plots]
+
+    lines = ["🌾 وضعیت مزرعه:\n"]
+    status_fa = {"empty": "🟫 خالی", "growing": "🌱 در حال رشد", "ready": "✅ آماده‌ی برداشت"}
+    for i, plot in enumerate(plots, start=1):
+        line = f"{i}. قطعه ({PLOT_BUSHES} بوته) — {status_fa[plot['status']]}"
+        if plot["status"] == "growing":
+            planted_at = parse_time(plot["planted_at"])
+            remaining = PLOT_GROW_MINUTES - (now() - planted_at).total_seconds() / 60
+            line += f" (حدود {max(0,int(remaining))} دقیقه مونده)"
+        lines.append(line)
+    bot.reply_to(message, "\n".join(lines))
+
+
+@bot.message_handler(commands=["بکار", "plant"])
+@group_only
+def handle_plant(message):
+    user_id = message.from_user.id
+    plots = get_plots(user_id)
+    empty_plot = next((p for p in plots if p["status"] == "empty"), None)
+
+    if empty_plot is None:
+        bot.reply_to(message, "هیچ قطعه‌ی خالی نداری! یا صبر کن برداشت کنی، یا مزرعه رو با /ارتقا بزرگ کن.")
+        return
+
+    ok, remaining = adjust_coins(user_id, -PLOT_PLANT_COST)
+    if not ok:
+        bot.reply_to(message, f"سکه‌ی کافی نداری! کاشتن {PLOT_PLANT_COST} سکه هزینه داره و تو {remaining} تا داری.")
+        return
+
+    set_plot(empty_plot["id"], status="growing", planted_at=now().isoformat())
+    bot.reply_to(message, f"🌱 کاشتی! تا {PLOT_GROW_MINUTES} دقیقه‌ی دیگه آماده‌ی برداشته.")
+
+
+@bot.message_handler(commands=["برداشت", "harvest"])
+@group_only
+def handle_harvest(message):
+    user_id = message.from_user.id
+    plots = get_plots(user_id)
+    plots = [refresh_plot_status(p) for p in plots]
+    ready_plots = [p for p in plots if p["status"] == "ready"]
+
+    if not ready_plots:
+        bot.reply_to(message, "هیچ قطعه‌ی آماده‌ای نداری!")
+        return
+
+    total_hay = len(ready_plots) * HAY_PER_HARVEST
+    for plot in ready_plots:
+        set_plot(plot["id"], status="empty", planted_at=None)
+
+    adjust_hay(user_id, total_hay)
+    bot.reply_to(message, f"🌾 {len(ready_plots)} قطعه برداشت کردی و {total_hay} یونجه گرفتی!")
+
+
+@bot.message_handler(commands=["انبار", "warehouse"])
+@group_only
+def handle_warehouse(message):
+    user = get_user_row(message.from_user.id)
+    bot.reply_to(message, f"🌾 موجودی انبار یونجه: {user['hay']}")
+
+
+# =========================================================
+#                    🎪 پیست 🎪
+# =========================================================
+
+@bot.message_handler(commands=["پیست", "track"])
+@group_only
+def handle_track(message):
+    user_id = message.from_user.id
+    process_audience_returns(user_id)
+    user = get_user_row(user_id)
+    bot.reply_to(
+        message,
+        f"🎪 وضعیت پیست:\n"
+        f"👥 تماشاچی: {user['track_audience']}/{user['track_capacity']}\n"
+        f"🎫 هر بلیط: {TICKET_PRICE} سکه"
+    )
+
+
+# =========================================================
+#                    🏠 طویله و ارتقاها 🏠
+# =========================================================
+
+def upgrade_price(base_price, upgrades_done):
+    return round(base_price * (UPGRADE_GROWTH_RATE ** upgrades_done))
+
+
+@bot.message_handler(commands=["طویله", "stable"])
+@group_only
+def handle_stable(message):
+    user_id = message.from_user.id
+    user = get_user_row(user_id)
+    horses_count = len(get_horses(user_id))
+    bot.reply_to(
+        message,
+        f"🏠 طویله:\n"
+        f"🐴 ظرفیت: {horses_count}/{user['stable_capacity']}"
+    )
+
+
+@bot.message_handler(commands=["ارتقا", "upgrade"])
+@group_only
+def handle_upgrade_info(message):
+    user = get_user_row(message.from_user.id)
+
+    stable_price = upgrade_price(UPGRADE_BASE_PRICES["stable"], user["stable_upgrades"])
+    track_price = upgrade_price(UPGRADE_BASE_PRICES["track"], user["track_upgrades"])
+    farm_price = upgrade_price(UPGRADE_BASE_PRICES["farm"], user["farm_upgrades"])
+
+text = (
+        "🏗️ ارتقاهای موجود:\n\n"
+        f"🏠 بزرگ کردن طویله (+۱ جای اسب)\n"
+        f"   قیمت: {stable_price} سکه — دستور: /ارتقا_طویله\n\n"
+        f"🎪 بزرگ کردن پیست (+۵ ظرفیت تماشاچی)\n"
+        f"   قیمت: {track_price} سکه — دستور: /ارتقا_پیست\n\n"
+        f"🌾 بزرگ کردن مزرعه (+۱ قطعه‌ی کاشت)\n"
+        f"   قیمت: {farm_price} سکه — دستور: /ارتقا_مزرعه"
     )
     bot.reply_to(message, text)
 
+
+@bot.message_handler(commands=["ارتقا_طویله"])
+@group_only
+def handle_upgrade_stable(message):
+    user_id = message.from_user.id
+    user = get_user_row(user_id)
+    price = upgrade_price(UPGRADE_BASE_PRICES["stable"], user["stable_upgrades"])
+
+    ok, remaining = adjust_coins(user_id, -price)
+    if not ok:
+        bot.reply_to(message, f"سکه‌ی کافی نداری! این ارتقا {price} سکه هزینه داره و تو {remaining} تا داری.")
+        return
+
+    update_user_fields(
+        user_id,
+        stable_capacity=user["stable_capacity"] + 1,
+        stable_upgrades=user["stable_upgrades"] + 1
+    )
+    bot.reply_to(message, f"🏠 طویله بزرگ‌تر شد! ظرفیت جدید: {user['stable_capacity']+1}")
+
+
+@bot.message_handler(commands=["ارتقا_پیست"])
+@group_only
+def handle_upgrade_track(message):
+    user_id = message.from_user.id
+    user = get_user_row(user_id)
+    price = upgrade_price(UPGRADE_BASE_PRICES["track"], user["track_upgrades"])
+
+    ok, remaining = adjust_coins(user_id, -price)
+    if not ok:
+        bot.reply_to(message, f"سکه‌ی کافی نداری! این ارتقا {price} سکه هزینه داره و تو {remaining} تا داری.")
+        return
+
+    update_user_fields(
+        user_id,
+        track_capacity=user["track_capacity"] + 5,
+        track_upgrades=user["track_upgrades"] + 1
+    )
+    bot.reply_to(message, f"🎪 پیست بزرگ‌تر شد! ظرفیت جدید تماشاچی: {user['track_capacity']+5}")
+
+
+@bot.message_handler(commands=["ارتقا_مزرعه"])
+@group_only
+def handle_upgrade_farm(message):
+    user_id = message.from_user.id
+    user = get_user_row(user_id)
+    price = upgrade_price(UPGRADE_BASE_PRICES["farm"], user["farm_upgrades"])
+
+    ok, remaining = adjust_coins(user_id, -price)
+    if not ok:
+        bot.reply_to(message, f"سکه‌ی کافی نداری! این ارتقا {price} سکه هزینه داره و تو {remaining} تا داری.")
+        return
+
+    add_plot(user_id)
+    update_user_fields(user_id, farm_upgrades=user["farm_upgrades"] + 1)
+    bot.reply_to(message, "🌾 یه قطعه‌ی جدید به مزرعه اضافه شد!")
+
+
+# =========================================================
+#                    🐎 بازار اسب 🐎
+# =========================================================
+
+@bot.message_handler(commands=["فروشگاه_اسب", "horsemarket"])
+@group_only
+def handle_horse_market(message):
+    market = get_market()
+    lines = ["🐎 بازار اسب امروز:\n"]
+    any_available = False
+    for breed_key, info in HORSE_BREEDS.items():
+        if breed_key == STARTER_BREED:
+            continue
+        if market.get(breed_key):
+            any_available = True
+            lines.append(
+                f"✅ {info['display']} — {info['price']} سکه\n"
+                f"   (خرید: /خرید_اسب {breed_key})"
+            )
+        else:
+            lines.append(f"❌ {info['display']} — امروز موجود نیست")
+    if not any_available:
+        lines.append("\nامروز هیچ اسبی موجود نیست، فردا دوباره سر بزن!")
+    bot.reply_to(message, "\n\n".join(lines))
+
+
+@bot.message_handler(commands=["خرید_اسب"])
+@group_only
+def handle_buy_horse(message):
+    user_id = message.from_user.id
+    parts = message.text.strip().split()
+    if len(parts) < 2 or parts[1] not in HORSE_BREEDS or parts[1] == STARTER_BREED:
+        bot.reply_to(message, "طرز استفاده: /خرید_اسب <نام نژاد>\nلیست نژادها رو با /فروشگاه_اسب ببین.")
+        return
+
+    breed_key = parts[1]
+    market = get_market()
+    if not market.get(breed_key):
+        bot.reply_to(message, "این نژاد امروز توی بازار موجود نیست!")
+        return
+
+    user = get_user_row(user_id)
+    horses_count = len(get_horses(user_id))
+    if horses_count >= user["stable_capacity"]:
+        bot.reply_to(message, "طویله‌ت جا نداره! اول با /ارتقا_طویله بزرگش کن.")
+        return
+
+    price = HORSE_BREEDS[breed_key]["price"]
+    ok, remaining = adjust_coins(user_id, -price)
+    if not ok:
+        bot.reply_to(message, f"سکه‌ی کافی نداری! این اسب {price} سکه هزینه داره و تو {remaining} تا داری.")
+        return
+
+    add_horse(user_id, breed_key)
+    bot.reply_to(message, f"🎉 {HORSE_BREEDS[breed_key]['display']} رو خریدی! با /اسب ببینش.")
+
+
+# =========================================================
+#                    🛒 فروشگاه 🛒
+# =========================================================
+
+@bot.message_handler(commands=["فروشگاه", "shop"])
+@group_only
+def handle_shop(message):
+    text = (
+        "🛒 فروشگاه:\n\n"
+        f"🌾 خرید ۱۰ یونجه: {SHOP_HAY_BUY_PER_10} سکه — /خرید_یونجه <مقدار>\n"
+        f"🌾 فروش ۱۰ یونجه: {SHOP_HAY_SELL_PER_10} سکه — /فروش_یونجه <مقدار>\n"
+        f"⚡ مکمل انرژی (پر کردن فوری): {SHOP_ENERGY_POTION_PRICE} سکه — /مکمل_انرژی <شماره اسب>\n"
+        f"🔨 نعل خوب (۱۵٪ سریع‌تر): {SHOP_HORSESHOE_GOOD_PRICE} سکه — /نعل <شماره اسب> خوب\n"
+        f"🔨 نعل عالی (۳۰٪ سریع‌تر): {SHOP_HORSESHOE_GREAT_PRICE} سکه — /نعل <شماره اسب> عالی"
+    )
+    bot.reply_to(message, text)
+
+
+@bot.message_handler(commands=["خرید_یونجه"])
+@group_only
+def handle_buy_hay(message):
+    user_id = message.from_user.id
+    parts = message.text.strip().split()
+    if len(parts) < 2 or not parts[1].isdigit() or int(parts[1]) <= 0:
+        bot.reply_to(message, "طرز استفاده: /خرید_یونجه <مقدار>\nمثال: /خرید_یونجه 10")
+        return
+
+    amount = int(parts[1])
+    cost = math.ceil(amount / 10 * SHOP_HAY_BUY_PER_10)
+
+    ok, remaining = adjust_coins(user_id, -cost)
+    if not ok:
+        bot.reply_to(message, f"سکه‌ی کافی نداری! {amount} یونجه {cost} سکه هزینه داره و تو {remaining} تا داری.")
+        return
+
+    adjust_hay(user_id, amount)
+    bot.reply_to(message, f"✅ {amount} یونجه خریدی! ({cost} سکه کم شد)")
+
+
+@bot.message_handler(commands=["فروش_یونجه"])
+@group_only
+def handle_sell_hay(message):
+    user_id = message.from_user.id
+    parts = message.text.strip().split()
+    if len(parts) < 2 or not parts[1].isdigit() or int(parts[1]) <= 0:
+        bot.reply_to(message, "طرز استفاده: /فروش_یونجه <مقدار>\nمثال: /فروش_یونجه 10")
+        return
+
+    amount = int(parts[1])
+    ok, remaining = adjust_hay(user_id, -amount)
+    if not ok:
+        bot.reply_to(message, f"یونجه‌ی کافی نداری! تو فقط {remaining} یونجه داری.")
+        return
+
+    earned = math.floor(amount / 10 * SHOP_HAY_SELL_PER_10)
+    adjust_coins(user_id, earned)
+    bot.reply_to(message, f"✅ {amount} یونجه فروختی و {earned} سکه گرفتی!")
+
+
+@bot.message_handler(commands=["مکمل_انرژی"])
+@group_only
+def handle_energy_potion(message):
+    user_id = message.from_user.id
+    parts = message.text.strip().split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        bot.reply_to(message, "طرز استفاده: /مکمل_انرژی <شماره اسب>\nمثال: /مکمل_انرژی 1")
+        return
+
+    index = int(parts[1])
+    horse = get_horse_by_index(user_id, index)
+    if horse is None:
+        bot.reply_to(message, "همچین اسبی نداری!")
+        return
+
+    ok, remaining = adjust_coins(user_id, -SHOP_ENERGY_POTION_PRICE)
+    if not ok:
+        bot.reply_to(message, f"سکه‌ی کافی نداری! این مکمل {SHOP_ENERGY_POTION_PRICE} سکه هزینه داره و تو {remaining} تا داری.")
+        return
+
+    breed = HORSE_BREEDS[horse["breed_key"]]
+    update_horse(horse["id"], energy=breed["energy_max"], last_energy_update=now().isoformat())
+    bot.reply_to(message, f"⚡ انرژی اسب شماره {index} کامل پر شد!")
+
+
+@bot.message_handler(commands=["نعل"])
+@group_only
+def handle_horseshoe(message):
+    user_id = message.from_user.id
+    parts = message.text.strip().split()
+    if len(parts) < 3 or not parts[1].isdigit() or parts[2] not in ("خوب", "عالی"):
+        bot.reply_to(message, "طرز استفاده: /نعل <شماره اسب> <خوب یا عالی>\nمثال: /نعل 1 خوب")
+        return
+
+    index = int(parts[1])
+    horse = get_horse_by_index(user_id, index)
+    if horse is None:
+        bot.reply_to(message, "همچین اسبی نداری!")
+        return
+
+    grade = parts[2]
+    price = SHOP_HORSESHOE_GOOD_PRICE if grade == "خوب" else SHOP_HORSESHOE_GREAT_PRICE
+    shoe_value = "good" if grade == "خوب" else "great"
+
+    ok, remaining = adjust_coins(user_id, -price)
+    if not ok:
+        bot.reply_to(message, f"سکه‌ی کافی نداری! نعل {grade} {price} سکه هزینه داره و تو {remaining} تا داری.")
+        return
+
+    update_horse(horse["id"], horseshoe=shoe_value)
+    bot.reply_to(message, f"🔨 نعل {grade} به اسب شماره {index} زده شد!")
+
+
+# =========================================================
+#                    🤝 انتقال سکه 🤝
+# =========================================================
+
+@bot.message_handler(commands=["انتقال", "transfer"])
+@group_only
+def handle_transfer(message):
+    user_id = message.from_user.id
+    parts = message.text.strip().split()
+    if len(parts) < 3 or not parts[1].startswith("@") or not parts[2].isdigit():
+        bot.reply_to(message, "طرز استفاده: /انتقال @یوزرنیم مبلغ\nمثال: /انتقال @ali 50")
+        return
+
+    target_username = parts[1]
+    amount = int(parts[2])
+    if amount <= 0:
+        bot.reply_to(message, "مبلغ باید مثبت باشه.")
+        return
+
+    target_user = find_user_by_username(target_username)
+    if target_user is None:
+        bot.reply_to(message, "این کاربر پیدا نشد. باید حداقل یه‌بار با ربات تعامل کرده باشه.")
+        return
+
+    if target_user["user_id"] == user_id:
+        bot.reply_to(message, "نمی‌تونی به خودت سکه بفرستی!")
+        return
+
+    ok, remaining = adjust_coins(user_id, -amount)
+    if not ok:
+        bot.reply_to(message, f"سکه‌ی کافی نداری! تو فقط {remaining} سکه داری.")
+        return
+
+    adjust_coins(target_user["user_id"], amount)
+    bot.reply_to(message, f"✅ {amount} سکه به {target_username} منتقل شد!")
+
+
+# =========================================================
+#                    💰 کیف پول و راهنما 💰
+# =========================================================
+
+@bot.message_handler(commands=["کیف_پول", "wallet"])
+@group_only
+def handle_wallet(message):
+    user = get_user_row(message.from_user.id)
+    bot.reply_to(message, f"💰 سکه: {user['coins']}\n🌾 یونجه: {user['hay']}")
+
+
+HELP_TEXT = """🐴 به بازی «طویله» خوش اومدی!
+
+━━━ 🐴 اسب ━━━
+/اسب — وضعیت اسب‌هات
+/بدو <شماره اسب> — فرستادن اسب به پیست
+
+━━━ 🌾 مزرعه ━━━
+/مزرعه — وضعیت قطعه‌های کاشت
+/بکار — کاشتن یه قطعه‌ی خالی
+/برداشت — برداشت قطعه‌های آماده
+
+━━━ 🍽️ غذا و انبار ━━━
+/انبار — موجودی یونجه
+/غذا <شماره اسب> — غذا دادن به اسب
+
+━━━ 🎪 پیست ━━━
+/پیست — وضعیت تماشاچی‌ها
+
+━━━ 🏠 طویله و ارتقا ━━━
+/طویله — وضعیت طویله
+/ارتقا — لیست ارتقاها با قیمت فعلی
+/ارتقا_طویله — بزرگ کردن طویله
+/ارتقا_پیست — بزرگ کردن پیست
+/ارتقا_مزرعه — بزرگ کردن مزرعه
+
+━━━ 🐎 بازار اسب ━━━
+/فروشگاه_اسب — اسب‌های موجود امروز
+/خرید_اسب <نژاد> — خرید اسب
+
+━━━ 🛒 فروشگاه ━━━
+/فروشگاه — لیست کالاها
+/خرید_یونجه <مقدار>
+/فروش_یونجه <مقدار>
+/مکمل_انرژی <شماره اسب>
+/نعل <شماره اسب> <خوب یا عالی>
+
+━━━ 🤝 اجتماعی ━━━
+/انتقال @یوزرنیم مبلغ — هدیه‌ی سکه
+
+━━━ 💰 عمومی ━━━
+/کیف_پول — موجودی سکه و یونجه
+/راهنما — همین صفحه
+
+🎁 هر روز یه قرعه‌کشی خودکار برگزار میشه و یه نفر شانسی جایزه می‌گیره!"""
+
+
+@bot.message_handler(commands=["start", "راهنما", "help"])
+@group_only
+def handle_help(message):
+    bot.reply_to(message, HELP_TEXT)
+
+
+# =========================================================
+#                    🎰 قرعه‌کشی روزانه 🎰
+# =========================================================
+
+def lottery_loop():
+    while True:
+        time.sleep(LOTTERY_CHECK_INTERVAL_SECONDS)
+        try:
+            today = date.today().isoformat()
+            last_run = get_setting("lottery_date")
+            if last_run == today:
+                continue
+
+            user_ids = get_all_user_ids()
+            if not user_ids:
+                set_setting("lottery_date", today)
+                continue
+
+            winner_id = random.choice(user_ids)
+            prize_type = random.choice(["coins", "hay"])
+            if prize_type == "coins":
+                adjust_coins(winner_id, LOTTERY_PRIZE)
+                prize_text = f"{LOTTERY_PRIZE} سکه"
+            else:
+                adjust_hay(winner_id, LOTTERY_PRIZE)
+                prize_text = f"{LOTTERY_PRIZE} یونجه"
+
+            set_setting("lottery_date", today)
+
+            chat_id = get_setting("last_chat_id")
+            if chat_id:
+                winner = get_user_row(winner_id)
+                name = winner["username"] or f"کاربر{winner_id}"
+                try:
+                    bot.send_message(
+                        int(chat_id),
+                        f"🎰 قرعه‌کشی امروز!\n🎉 برنده: {name}\n🎁 جایزه: {prize_text}"
+                    )
+                except Exception:
+                    pass
+        except Exception as e:
+            print("خطا در قرعه‌کشی:", e)
+
+
+# =========================================================
+#                    🌐 وب‌سرور برای سازگاری با Render 🌐
+# =========================================================
 
 def run_dummy_web_server():
     from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -549,7 +1237,7 @@ def run_dummy_web_server():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"Horse bot is running!")
+            self.wfile.write(b"Stable bot is running!")
 
         def log_message(self, format, *args):
             pass
@@ -559,12 +1247,16 @@ def run_dummy_web_server():
     server.serve_forever()
 
 
+# =========================================================
+#                    🚀 اجرا 🚀
+# =========================================================
+
 if __name__ == "__main__":
     init_db()
     print("دیتابیس آماده شد.")
 
-    sickness_thread = threading.Thread(target=sickness_checker_loop, daemon=True)
-    sickness_thread.start()
+    lottery_thread = threading.Thread(target=lottery_loop, daemon=True)
+    lottery_thread.start()
 
     web_thread = threading.Thread(target=run_dummy_web_server, daemon=True)
     web_thread.start()
@@ -572,3 +1264,4 @@ if __name__ == "__main__":
     print("ربات در حال اجراست... (برای توقف Ctrl+C بزن)")
 
     bot.infinity_polling()
+    
