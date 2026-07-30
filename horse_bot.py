@@ -853,7 +853,7 @@ text = (
         f"🌾 بزرگ کردن مزرعه (+۱ قطعه‌ی کاشت)\n"
         f"   قیمت: {farm_price} سکه — دستور: /ارتقا_مزرعه"
     )
-    bot.reply_to(message, text)
+bot.reply_to(message, text)
 
 
 @bot.message_handler(commands=["ارتقا_طویله"])
