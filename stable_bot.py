@@ -3112,7 +3112,7 @@ def league_loop():
 
 # ---------- ثابت‌های بازی ----------
 HUNT_HOURS = (0, 12)
-HUNT_MAX_ATTEMPTS_PER_SLOT = 3
+HUNT_MAX_ATTEMPTS_PER_SLOT = 5
 WAR_HOURS = (0, 3, 6, 9, 12, 15, 18, 21)
 WAR_ROUND_LENGTH_HOURS = 3
 TREASURY_START_BALANCE = 100
