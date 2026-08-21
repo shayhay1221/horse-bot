@@ -1057,7 +1057,7 @@ def format_horse_line(index, horse):
 @bot.message_handler(commands=["نسخه", "version"])
 def handle_version(message):
     # فقط برای تست اینکه رندر واقعاً آخرین نسخه رو دیپلوی کرده یا نه -- کاملاً بی‌خطر
-    bot.reply_to(message, "🔖 نسخه: v-2026-08-18-dino-fixes")
+    bot.reply_to(message, "🔖 نسخه: v-2026-08-22-dino-role-on-use")
 
 
 @bot.message_handler(commands=["اسب", "horse"])
